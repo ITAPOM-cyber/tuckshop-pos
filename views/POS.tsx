@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { dbService } from '../services/mockDb';
 import { useApp } from '../App';
-import { Product, Student, Category, Employee, Transaction } from '../types';
+import { Product, Student, Category, Employee, Transaction, Variant } from '../types';
 import { 
   Search, 
   Trash2, 
@@ -20,7 +20,8 @@ import {
   Users,
   ChevronRight,
   TrendingUp,
-  BarChart3
+  BarChart3,
+  Layers
 } from 'lucide-react';
 
 interface POSProps {
@@ -36,7 +37,7 @@ const POSView: React.FC<POSProps> = ({ currentUser }) => {
   
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [cart, setCart] = useState<Array<{ product: Product; quantity: number }>>([]);
+  const [cart, setCart] = useState<Array<{ product: Product; variant?: Variant; quantity: number }>>([]);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [showCheckout, setShowCheckout] = useState(false);
   const [checkoutComplete, setCheckoutComplete] = useState(false);
@@ -46,19 +47,19 @@ const POSView: React.FC<POSProps> = ({ currentUser }) => {
   const [showStudentLookup, setShowStudentLookup] = useState(false);
   const [studentSearch, setStudentSearch] = useState('');
 
-  // Initial load
+  // Variant Selection State
+  const [variantSelectionProduct, setVariantSelectionProduct] = useState<Product | null>(null);
+
   useEffect(() => {
     setStudents(dbService.getStudents());
   }, []);
 
-  // Sync latest student data when opening lookup to avoid stale balances
   useEffect(() => {
     if (showStudentLookup) {
       setStudents(dbService.getStudents());
     }
   }, [showStudentLookup]);
 
-  // Session Stats Calculation
   const sessionStats = useMemo(() => {
     const today = new Date().setHours(0,0,0,0);
     const sessionTxs = transactions.filter(t => 
@@ -68,12 +69,12 @@ const POSView: React.FC<POSProps> = ({ currentUser }) => {
     );
 
     const revenue = sessionTxs.reduce((sum, t) => sum + t.total, 0);
-    
-    // Profit = (Sell Price - Cost Price) * Qty
     const profit = sessionTxs.reduce((sum, t) => {
       const txProfit = t.items.reduce((itemSum, item) => {
         const prod = products.find(p => p.id === item.productId);
-        const cost = prod?.costPrice || 0;
+        const cost = item.variantId && prod?.variants 
+          ? prod.variants.find(v => v.id === item.variantId)?.costPrice || 0
+          : prod?.costPrice || 0;
         return itemSum + ((item.priceAtSale - cost) * item.quantity);
       }, 0);
       return sum + txProfit;
@@ -98,11 +99,15 @@ const POSView: React.FC<POSProps> = ({ currentUser }) => {
     );
   }, [students, studentSearch]);
 
-  const subtotal = cart.reduce((sum, item) => sum + (item.product.sellingPrice * item.quantity), 0);
+  const subtotal = cart.reduce((sum, item) => {
+    const price = item.variant ? item.variant.sellingPrice : item.product.sellingPrice;
+    return sum + (price * item.quantity);
+  }, 0);
   const total = subtotal;
 
-  const addToCart = (product: Product) => {
-    if (product.stockQuantity <= 0) {
+  const addToCart = (product: Product, variant?: Variant) => {
+    const stockQty = variant ? variant.stockQuantity : product.stockQuantity;
+    if (product.trackStock && stockQty <= 0) {
       alert("Out of stock!");
       return;
     }
@@ -113,21 +118,25 @@ const POSView: React.FC<POSProps> = ({ currentUser }) => {
     }
 
     setCart(prev => {
-      const existing = prev.find(item => item.product.id === product.id);
+      const existing = prev.find(item => 
+        item.product.id === product.id && 
+        (!variant || item.variant?.id === variant.id)
+      );
       if (existing) {
         return prev.map(item => 
-          item.product.id === product.id 
+          (item.product.id === product.id && (!variant || item.variant?.id === variant.id))
             ? { ...item, quantity: item.quantity + 1 } 
             : item
         );
       }
-      return [...prev, { product, quantity: 1 }];
+      return [...prev, { product, variant, quantity: 1 }];
     });
+    setVariantSelectionProduct(null);
   };
 
-  const updateCartQuantity = (productId: string, delta: number) => {
+  const updateCartQuantity = (productId: string, variantId: string | undefined, delta: number) => {
     setCart(prev => prev.map(item => {
-      if (item.product.id === productId) {
+      if (item.product.id === productId && (!variantId || item.variant?.id === variantId)) {
         const newQty = Math.max(0, item.quantity + delta);
         return { ...item, quantity: newQty };
       }
@@ -148,7 +157,7 @@ const POSView: React.FC<POSProps> = ({ currentUser }) => {
         return;
       }
       if (selectedStudent.spentToday + total > selectedStudent.dailySpendLimit) {
-        alert(`Daily spend limit exceeded. Remaining: ${currencySymbol}${(selectedStudent.dailySpendLimit - selectedStudent.spentToday).toFixed(2)}`);
+        alert(`Daily limit exceeded. Remaining: ${currencySymbol}${(selectedStudent.dailySpendLimit - selectedStudent.spentToday).toFixed(2)}`);
         return;
       }
     }
@@ -160,8 +169,9 @@ const POSView: React.FC<POSProps> = ({ currentUser }) => {
       studentId: selectedStudent?.id,
       items: cart.map(item => ({
         productId: item.product.id,
+        variantId: item.variant?.id,
         quantity: item.quantity,
-        priceAtSale: item.product.sellingPrice
+        priceAtSale: item.variant ? item.variant.sellingPrice : item.product.sellingPrice
       })),
       subtotal,
       discount: 0,
@@ -177,17 +187,22 @@ const POSView: React.FC<POSProps> = ({ currentUser }) => {
       setSelectedStudent(null);
       setShowCheckout(false);
       setCheckoutComplete(false);
-      // Refresh local states
       setStudents(dbService.getStudents());
       setTransactions(dbService.getTransactions());
     }, 2000);
   };
 
+  const handleProductClick = (product: Product) => {
+    if (product.variants && product.variants.length > 0) {
+      setVariantSelectionProduct(product);
+    } else {
+      addToCart(product);
+    }
+  };
+
   return (
     <div className="flex h-screen bg-gray-100 relative">
-      {/* Left: Product Selection */}
       <div className="flex-1 flex flex-col h-full overflow-hidden">
-        {/* Header/Search */}
         <div className="p-4 bg-white border-b border-gray-200 flex items-center gap-4">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
@@ -200,7 +215,6 @@ const POSView: React.FC<POSProps> = ({ currentUser }) => {
             />
           </div>
           
-          {/* Session Stats Toggle */}
           <button 
             onClick={() => setShowStats(!showStats)}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold transition-all ${showStats ? 'bg-indigo-600 text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
@@ -229,7 +243,6 @@ const POSView: React.FC<POSProps> = ({ currentUser }) => {
           )}
         </div>
 
-        {/* Stats Panel (Overlay) */}
         {showStats && (
           <div className="absolute top-20 right-4 w-72 bg-white rounded-3xl shadow-2xl border border-gray-100 p-6 z-50 animate-in slide-in-from-top-4">
             <div className="flex justify-between items-center mb-6">
@@ -238,22 +251,21 @@ const POSView: React.FC<POSProps> = ({ currentUser }) => {
             </div>
             <div className="space-y-4">
               <div className="p-4 bg-green-50 rounded-2xl border border-green-100">
-                <p className="text-[10px] font-black text-green-600 uppercase tracking-[0.2em] mb-1">Today's Revenue</p>
+                <p className="text-[10px] font-black text-green-600 uppercase tracking-[0.2em] mb-1">Shift Revenue</p>
                 <p className="text-2xl font-black text-green-700">{currencySymbol}{sessionStats.revenue.toFixed(2)}</p>
               </div>
               <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100">
-                <p className="text-[10px] font-black text-blue-600 uppercase tracking-[0.2em] mb-1">Today's Profit</p>
+                <p className="text-[10px] font-black text-blue-600 uppercase tracking-[0.2em] mb-1">Shift Profit</p>
                 <p className="text-2xl font-black text-blue-700">{currencySymbol}{sessionStats.profit.toFixed(2)}</p>
               </div>
               <div className="flex justify-between items-center px-2">
-                <span className="text-xs text-gray-500 font-bold uppercase">Total Orders</span>
+                <span className="text-xs text-gray-500 font-bold uppercase">Orders</span>
                 <span className="font-black text-gray-900">{sessionStats.count}</span>
               </div>
             </div>
           </div>
         )}
 
-        {/* Categories Bar */}
         <div className="flex gap-2 p-4 bg-gray-50 overflow-x-auto whitespace-nowrap scrollbar-hide">
           <button
             onClick={() => setSelectedCategory(null)}
@@ -276,30 +288,38 @@ const POSView: React.FC<POSProps> = ({ currentUser }) => {
           ))}
         </div>
 
-        {/* Product Grid */}
         <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
           {filteredProducts.map(product => (
             <button
               key={product.id}
-              onClick={() => addToCart(product)}
+              onClick={() => handleProductClick(product)}
               className="bg-white p-3 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:border-blue-200 transition-all text-left flex flex-col group relative"
             >
               <div className="overflow-hidden rounded-xl mb-3">
                 <img src={product.imageUrl} alt={product.name} className="w-full aspect-square object-cover group-hover:scale-105 transition-transform duration-300" />
+                {product.variants && product.variants.length > 0 && (
+                  <div className="absolute top-4 right-4 bg-blue-600 text-white p-2 rounded-lg shadow-lg">
+                    <Layers className="w-4 h-4" />
+                  </div>
+                )}
               </div>
               <div className="flex-1">
                 <h4 className="font-bold text-gray-800 line-clamp-1">{product.name}</h4>
-                <p className="text-blue-600 font-bold mt-1">{currencySymbol}{product.sellingPrice.toFixed(2)}</p>
+                <p className="text-blue-600 font-bold mt-1">
+                  {product.variants && product.variants.length > 0 
+                    ? `From ${currencySymbol}${Math.min(...product.variants.map(v => v.sellingPrice)).toFixed(2)}`
+                    : `${currencySymbol}${product.sellingPrice.toFixed(2)}`
+                  }
+                </p>
               </div>
-              <div className={`mt-2 text-[10px] font-bold uppercase tracking-wider ${product.stockQuantity < 10 ? 'text-red-500' : 'text-gray-400'}`}>
-                Stock: {product.stockQuantity}
+              <div className={`mt-2 text-[10px] font-bold uppercase tracking-wider ${product.stockQuantity < 10 && product.trackStock ? 'text-red-500' : 'text-gray-400'}`}>
+                {product.trackStock ? `Stock: ${product.variants ? product.variants.reduce((s,v) => s+v.stockQuantity, 0) : product.stockQuantity}` : 'Unlimited'}
               </div>
             </button>
           ))}
         </div>
       </div>
 
-      {/* Right Sidebar: Cart */}
       <div className="w-96 bg-white border-l border-gray-200 flex flex-col shadow-2xl z-10">
         <div className="p-6 border-b border-gray-100 flex items-center justify-between">
           <h3 className="text-xl font-bold flex items-center gap-2">
@@ -320,19 +340,20 @@ const POSView: React.FC<POSProps> = ({ currentUser }) => {
               <p className="font-medium">Cart is empty</p>
             </div>
           ) : (
-            cart.map(item => (
-              <div key={item.product.id} className="flex items-center gap-3 bg-gray-50 p-3 rounded-2xl border border-gray-100 group">
+            cart.map((item, idx) => (
+              <div key={`${item.product.id}-${item.variant?.id || idx}`} className="flex items-center gap-3 bg-gray-50 p-3 rounded-2xl border border-gray-100 group">
                 <img src={item.product.imageUrl} className="w-12 h-12 rounded-lg object-cover" />
                 <div className="flex-1 min-w-0">
                   <h5 className="font-bold text-sm text-gray-800 truncate">{item.product.name}</h5>
-                  <p className="text-xs text-gray-500">{currencySymbol}{item.product.sellingPrice.toFixed(2)}</p>
+                  {item.variant && <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">{item.variant.name}</p>}
+                  <p className="text-xs text-gray-500">{currencySymbol}{(item.variant ? item.variant.sellingPrice : item.product.sellingPrice).toFixed(2)}</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => updateCartQuantity(item.product.id, -1)} className="w-8 h-8 rounded-full bg-white border border-gray-200 flex items-center justify-center hover:bg-red-50 hover:text-red-500 transition-colors">
+                  <button onClick={() => updateCartQuantity(item.product.id, item.variant?.id, -1)} className="w-8 h-8 rounded-full bg-white border border-gray-200 flex items-center justify-center hover:bg-red-50 hover:text-red-500 transition-colors">
                     <Minus className="w-4 h-4" />
                   </button>
                   <span className="font-bold w-4 text-center">{item.quantity}</span>
-                  <button onClick={() => updateCartQuantity(item.product.id, 1)} className="w-8 h-8 rounded-full bg-white border border-gray-200 flex items-center justify-center hover:bg-green-50 hover:text-green-500 transition-colors">
+                  <button onClick={() => updateCartQuantity(item.product.id, item.variant?.id, 1)} className="w-8 h-8 rounded-full bg-white border border-gray-200 flex items-center justify-center hover:bg-green-50 hover:text-green-500 transition-colors">
                     <Plus className="w-4 h-4" />
                   </button>
                 </div>
@@ -341,7 +362,6 @@ const POSView: React.FC<POSProps> = ({ currentUser }) => {
           )}
         </div>
 
-        {/* Order Summary & Finalize Button */}
         <div className="p-6 bg-gray-50 border-t border-gray-200 space-y-6">
           <div className="space-y-2">
             <div className="flex justify-between text-gray-500 font-medium">
@@ -365,7 +385,48 @@ const POSView: React.FC<POSProps> = ({ currentUser }) => {
         </div>
       </div>
 
-      {/* Student Selection Modal */}
+      {variantSelectionProduct && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2.5rem] w-full max-w-lg shadow-2xl overflow-hidden animate-in zoom-in duration-300 flex flex-col">
+            <div className="p-8 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+              <div className="flex items-center gap-4">
+                <img src={variantSelectionProduct.imageUrl} className="w-16 h-16 rounded-2xl object-cover border border-white shadow-md" alt="" />
+                <div>
+                  <h2 className="text-xl font-black text-gray-900">{variantSelectionProduct.name}</h2>
+                  <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">Select Variant</p>
+                </div>
+              </div>
+              <button onClick={() => setVariantSelectionProduct(null)} className="p-3 hover:bg-gray-200 rounded-full transition-colors">
+                <X className="w-6 h-6 text-gray-400" />
+              </button>
+            </div>
+            <div className="p-8 grid grid-cols-1 gap-4">
+              {variantSelectionProduct.variants?.map(v => (
+                <button
+                  key={v.id}
+                  onClick={() => addToCart(variantSelectionProduct, v)}
+                  disabled={variantSelectionProduct.trackStock && v.stockQuantity <= 0}
+                  className="flex items-center justify-between p-6 rounded-2xl border-2 border-gray-100 hover:border-blue-600 hover:bg-blue-50 transition-all group disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <div className="text-left">
+                    <p className="text-lg font-black text-gray-900 group-hover:text-blue-700">{v.name}</p>
+                    <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">{v.sku}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xl font-black text-blue-600">{currencySymbol}{v.sellingPrice.toFixed(2)}</p>
+                    {variantSelectionProduct.trackStock && (
+                      <p className={`text-[10px] font-bold uppercase ${v.stockQuantity < 5 ? 'text-red-500' : 'text-gray-400'}`}>
+                        {v.stockQuantity} in stock
+                      </p>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {showStudentLookup && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden animate-in zoom-in duration-300 flex flex-col max-h-[80vh]">
@@ -433,7 +494,6 @@ const POSView: React.FC<POSProps> = ({ currentUser }) => {
         </div>
       )}
 
-      {/* Checkout Modal: Choose Payment Method */}
       {showCheckout && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-[2.5rem] w-full max-w-2xl overflow-hidden shadow-2xl animate-in zoom-in duration-300">
@@ -463,7 +523,6 @@ const POSView: React.FC<POSProps> = ({ currentUser }) => {
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {/* Primary Methods */}
                     <button 
                       onClick={() => handleCheckout('cash')} 
                       className="flex flex-col items-center gap-4 p-10 rounded-[2rem] border-2 border-gray-100 hover:border-green-500 hover:bg-green-50 transition-all group active:scale-95"
@@ -509,11 +568,18 @@ const POSView: React.FC<POSProps> = ({ currentUser }) => {
                         <ChevronRight className="w-6 h-6" />
                       </button>
                     ) : (
-                      <button 
-                        onClick={() => handleCheckout('wallet')}
+                      <div 
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleCheckout('wallet'); }}
+                        onClick={() => {
+                          if (selectedStudent.walletBalance >= total) {
+                            handleCheckout('wallet');
+                          }
+                        }}
                         className={`w-full flex items-center justify-between p-6 rounded-2xl border-2 transition-all font-bold ${
                           selectedStudent.walletBalance >= total 
-                          ? 'border-blue-600 bg-blue-600 text-white shadow-xl hover:bg-blue-700' 
+                          ? 'border-blue-600 bg-blue-600 text-white shadow-xl hover:bg-blue-700 cursor-pointer' 
                           : 'border-red-100 bg-red-50 text-red-500 cursor-not-allowed'
                         }`}
                       >
@@ -542,7 +608,7 @@ const POSView: React.FC<POSProps> = ({ currentUser }) => {
                            )}
                            <ChevronRight className="w-6 h-6" />
                         </div>
-                      </button>
+                      </div>
                     )}
                   </div>
                 </div>

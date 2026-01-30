@@ -6,32 +6,33 @@ export interface AppSettings {
   currency: CurrencyCode;
 }
 
+export interface Category {
+  id: string;
+  name: string;
+  color: string;
+}
+
 export interface PermissionMatrix {
-  // Sales
   accessPOS: boolean;
   applyDiscounts: boolean;
   changeItemPrice: boolean;
   voidSales: boolean;
   processRefunds: boolean;
   openCashDrawer: boolean;
-  // Inventory
   viewProducts: boolean;
   addProducts: boolean;
   editProducts: boolean;
   deleteProducts: boolean;
   manageCategories: boolean;
   adjustInventory: boolean;
-  // Students
   createStudents: boolean;
   editStudents: boolean;
   addBalance: boolean;
   viewBalances: boolean;
   setSpendingLimits: boolean;
-  // Reports
   viewSalesReports: boolean;
   viewProfitReports: boolean;
   exportReports: boolean;
-  // Settings
   accessBackOffice: boolean;
   manageEmployees: boolean;
 }
@@ -45,6 +46,20 @@ export interface Employee {
   active: boolean;
 }
 
+export interface ProductComponent {
+  productId: string;
+  quantity: number;
+}
+
+export interface Variant {
+  id: string;
+  name: string; // e.g., 'Small', 'Large', 'Blue'
+  sku: string;
+  costPrice: number;
+  sellingPrice: number;
+  stockQuantity: number;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -53,14 +68,51 @@ export interface Product {
   costPrice: number;
   sellingPrice: number;
   stockQuantity: number;
+  minStockLevel: number;
   imageUrl: string;
   active: boolean;
+  isComposite: boolean;
+  trackStock: boolean; // Toggle for physical stock vs service
+  variants?: Variant[]; // Multi-variant support
+  components?: ProductComponent[];
 }
 
-export interface Category {
+export type AdjustmentReason = 'damage' | 'return' | 'inventory_count' | 'waste' | 'restock' | 'stocktake';
+
+export interface StockAdjustment {
+  id: string;
+  timestamp: number;
+  productId: string;
+  variantId?: string; // Optional variant attribution
+  quantityChange: number;
+  reason: AdjustmentReason;
+  employeeId: string;
+  expectedStock?: number; // For stocktakes
+  actualStock?: number;   // For stocktakes
+  note?: string;
+}
+
+export interface Supplier {
   id: string;
   name: string;
-  color: string;
+  contactName: string;
+  email: string;
+}
+
+export type POStatus = 'draft' | 'ordered' | 'received';
+
+export interface PurchaseOrder {
+  id: string;
+  supplierId: string;
+  date: number;
+  status: POStatus;
+  items: Array<{
+    productId: string;
+    variantId?: string;
+    quantity: number;
+    cost: number;
+  }>;
+  total: number;
 }
 
 export interface Student {
@@ -70,7 +122,7 @@ export interface Student {
   walletBalance: number;
   dailySpendLimit: number;
   spentToday: number;
-  restrictedProducts: string[]; // Product IDs
+  restrictedProducts: string[];
   pin: string;
   qrCode: string;
   imageUrl?: string;
@@ -83,6 +135,7 @@ export interface Transaction {
   studentId?: string;
   items: Array<{
     productId: string;
+    variantId?: string;
     quantity: number;
     priceAtSale: number;
   }>;

@@ -23,7 +23,9 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Clock,
-  ChevronRight
+  ChevronRight,
+  UserCheck,
+  PackageCheck
 } from 'lucide-react';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
@@ -33,6 +35,7 @@ const DashboardView: React.FC = () => {
   const transactions = dbService.getTransactions();
   const products = dbService.getProducts();
   const students = dbService.getStudents();
+  const employees = dbService.getEmployees();
   const categories = dbService.getCategories();
 
   const stats = useMemo(() => {
@@ -41,13 +44,15 @@ const DashboardView: React.FC = () => {
       .filter(t => t.timestamp >= today && t.status === 'completed')
       .reduce((sum, t) => sum + t.total, 0);
     
-    const lowStockCount = products.filter(p => p.stockQuantity < 10).length;
+    const lowStockCount = products.filter(p => p.trackStock && p.stockQuantity <= p.minStockLevel).length;
+    const inventoryValue = products.reduce((sum, p) => sum + (p.trackStock ? p.costPrice * p.stockQuantity : 0), 0);
     
     return {
       todaySales,
       studentCount: students.length,
       transactionCount: transactions.length,
-      lowStockCount
+      lowStockCount,
+      inventoryValue
     };
   }, [transactions, products, students]);
 
@@ -87,62 +92,68 @@ const DashboardView: React.FC = () => {
 
   return (
     <div className="p-8 space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <header>
-        <h1 className="text-3xl font-bold text-gray-900">System Dashboard</h1>
-        <p className="text-gray-500">Analytics and real-time performance tracking.</p>
+      <header className="flex justify-between items-end">
+        <div>
+          <h1 className="text-3xl font-black text-gray-900 tracking-tight">System Dashboard</h1>
+          <p className="text-gray-500 font-medium">Real-time inventory health and sales performance.</p>
+        </div>
+        <div className="bg-blue-600 text-white px-6 py-3 rounded-2xl flex items-center gap-4 shadow-xl shadow-blue-200">
+          <PackageCheck className="w-6 h-6" />
+          <div>
+            <p className="text-[10px] font-black uppercase text-blue-200 tracking-widest">Stock Assets</p>
+            <p className="text-xl font-black">{currencySymbol}{stats.inventoryValue.toLocaleString()}</p>
+          </div>
+        </div>
       </header>
 
-      {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard title="Today's Sales" value={`${currencySymbol}${stats.todaySales.toFixed(2)}`} icon={TrendingUp} color="blue" trend="+8%" />
+        <StatCard title="Today's Sales" value={`${currencySymbol}${stats.todaySales.toFixed(2)}`} icon={TrendingUp} color="blue" trend="+12%" />
         <StatCard title="Total Students" value={stats.studentCount.toString()} icon={Users} color="purple" />
         <StatCard title="Total Orders" value={stats.transactionCount.toString()} icon={ShoppingBag} color="green" />
-        <StatCard title="Low Stock" value={stats.lowStockCount.toString()} icon={AlertTriangle} color="orange" isWarning={stats.lowStockCount > 0} />
+        <StatCard title="Low Stock Alerts" value={stats.lowStockCount.toString()} icon={AlertTriangle} color="orange" isWarning={stats.lowStockCount > 0} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Sales by Grade Chart */}
-        <div className="lg:col-span-2 bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-          <h3 className="text-lg font-bold mb-6">Revenue by Grade</h3>
+        <div className="lg:col-span-2 bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm">
+          <h3 className="text-lg font-black text-gray-800 mb-6 uppercase tracking-widest">Revenue by Grade</h3>
           <div className="h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={salesByGrade}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} />
-                <YAxis axisLine={false} tickLine={false} />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fontWeight: 600, fill: '#94a3b8' }} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fontWeight: 600, fill: '#94a3b8' }} />
                 <Tooltip 
                   cursor={{ fill: '#f8fafc' }}
-                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                  contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.1)' }}
                   formatter={(value: any) => [`${currencySymbol}${parseFloat(value).toFixed(2)}`, 'Sales']}
                 />
-                <Bar dataKey="total" fill="#3b82f6" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="total" fill="#3b82f6" radius={[12, 12, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* Sales by Category Pie */}
-        <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-          <h3 className="text-lg font-bold mb-6">Sales by Category</h3>
+        <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm">
+          <h3 className="text-lg font-black text-gray-800 mb-6 uppercase tracking-widest">Categories</h3>
           <div className="h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
                   data={salesByCategory}
                   innerRadius={60}
-                  outerRadius={80}
-                  paddingAngle={5}
+                  outerRadius={100}
+                  paddingAngle={8}
                   dataKey="value"
                 >
                   {salesByCategory.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />
                   ))}
                 </Pie>
                 <Tooltip 
-                   contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                   contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.1)' }}
                    formatter={(value: any) => [`${currencySymbol}${parseFloat(value).toFixed(2)}`, 'Revenue']}
                 />
-                <Legend iconType="circle" />
+                <Legend iconType="circle" wrapperStyle={{ paddingTop: '20px' }} />
               </PieChart>
             </ResponsiveContainer>
           </div>
@@ -150,36 +161,45 @@ const DashboardView: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Recent Transactions Table */}
-        <div className="lg:col-span-2 bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="p-6 border-b border-gray-50 flex items-center justify-between">
-            <h3 className="text-lg font-bold flex items-center gap-2">
+        <div className="lg:col-span-2 bg-white rounded-[2.5rem] border border-gray-100 shadow-sm overflow-hidden">
+          <div className="p-8 border-b border-gray-50 flex items-center justify-between">
+            <h3 className="text-lg font-black text-gray-800 uppercase tracking-widest flex items-center gap-3">
               <Clock className="w-5 h-5 text-gray-400" />
-              Recent Activity
+              Live Audit Feed
             </h3>
-            <button className="text-blue-600 text-sm font-bold flex items-center gap-1 hover:underline">
-              View All <ChevronRight className="w-4 h-4" />
+            <button className="text-blue-600 text-sm font-black flex items-center gap-1 hover:underline uppercase tracking-widest">
+              Full Logs <ChevronRight className="w-4 h-4" />
             </button>
           </div>
           <div className="divide-y divide-gray-50">
             {recentTransactions.map(tx => {
               const student = students.find(s => s.id === tx.studentId);
+              const cashier = employees.find(e => e.id === tx.employeeId);
               return (
-                <div key={tx.id} className="p-4 flex items-center justify-between hover:bg-gray-50 transition-colors">
+                <div key={tx.id} className="p-6 flex items-center justify-between hover:bg-gray-50 transition-colors">
                   <div className="flex items-center gap-4">
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm ${
+                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-sm shadow-inner ${
                       tx.paymentMethod === 'wallet' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-600'
                     }`}>
                       {tx.paymentMethod === 'wallet' ? 'W' : 'C'}
                     </div>
                     <div>
-                      <p className="font-bold text-gray-900">{student ? student.name : 'Walk-in Customer'}</p>
-                      <p className="text-xs text-gray-400">{new Date(tx.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {tx.items.length} items</p>
+                      <p className="font-bold text-gray-900">{student ? student.name : 'Walk-in'}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <UserCheck className="w-3 h-3 text-gray-400" />
+                        <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
+                           By {cashier?.name || 'Unknown'}
+                        </p>
+                        <span className="text-gray-300">•</span>
+                        <p className="text-[10px] text-gray-400 font-medium">
+                          {new Date(tx.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="font-black text-gray-900">{currencySymbol}{tx.total.toFixed(2)}</p>
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">{tx.paymentMethod}</p>
+                    <p className="font-black text-gray-900 text-lg">{currencySymbol}{tx.total.toFixed(2)}</p>
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">{tx.paymentMethod}</p>
                   </div>
                 </div>
               );
@@ -187,23 +207,23 @@ const DashboardView: React.FC = () => {
           </div>
         </div>
 
-        {/* Quick Inventory Summary */}
-        <div className="bg-blue-600 rounded-3xl p-8 text-white flex flex-col justify-between shadow-xl">
-          <div>
-            <h3 className="text-xl font-bold mb-2">Performance Goal</h3>
-            <p className="text-blue-100 text-sm">Target daily revenue: {currencySymbol}500.00</p>
+        <div className="bg-gray-900 rounded-[2.5rem] p-10 text-white flex flex-col justify-between shadow-2xl relative overflow-hidden group">
+          <div className="absolute -right-10 -top-10 w-40 h-40 bg-blue-600/20 rounded-full blur-3xl group-hover:scale-150 transition-transform duration-1000" />
+          <div className="relative z-10">
+            <h3 className="text-2xl font-black mb-2 tracking-tight text-white/90">Daily Goal</h3>
+            <p className="text-white/50 text-sm font-medium">Sales target: {currencySymbol}500.00</p>
           </div>
-          <div className="py-8">
-            <div className="flex justify-between items-end mb-2">
-               <span className="text-4xl font-black">{Math.min(100, Math.floor((stats.todaySales / 500) * 100))}%</span>
-               <span className="text-sm font-bold uppercase tracking-wider text-blue-200">Progress</span>
+          <div className="py-10 relative z-10">
+            <div className="flex justify-between items-end mb-4">
+               <span className="text-6xl font-black">{Math.min(100, Math.floor((stats.todaySales / 500) * 100))}%</span>
+               <span className="text-[10px] font-black uppercase tracking-[0.3em] text-blue-400">Target</span>
             </div>
-            <div className="w-full h-3 bg-blue-500 rounded-full overflow-hidden">
-               <div className="h-full bg-white transition-all duration-1000" style={{ width: `${Math.min(100, (stats.todaySales / 500) * 100)}%` }} />
+            <div className="w-full h-4 bg-white/10 rounded-full overflow-hidden">
+               <div className="h-full bg-blue-500 transition-all duration-1000 shadow-[0_0_20px_rgba(59,130,246,0.5)]" style={{ width: `${Math.min(100, (stats.todaySales / 500) * 100)}%` }} />
             </div>
           </div>
-          <p className="text-xs font-medium text-blue-100 leading-relaxed italic">
-            Tip: High sales in Sweets today. Ensure candy shelves are restocked for afternoon break.
+          <p className="text-xs font-bold text-white/40 leading-relaxed italic relative z-10">
+            "Note: Tracking 12% more items since physical inventory audit."
           </p>
         </div>
       </div>
@@ -220,21 +240,21 @@ const StatCard: React.FC<{ title: string; value: string; icon: any; color: strin
   };
 
   return (
-    <div className={`bg-white p-6 rounded-3xl border shadow-sm transition-all hover:shadow-md ${isWarning ? 'border-orange-200' : 'border-gray-100'}`}>
-      <div className="flex items-center justify-between mb-4">
-        <div className={`p-3 rounded-2xl ${colors[color]}`}>
+    <div className={`bg-white p-8 rounded-[2.5rem] border shadow-sm transition-all hover:shadow-xl hover:-translate-y-1 ${isWarning ? 'border-orange-200 bg-orange-50/20' : 'border-gray-100'}`}>
+      <div className="flex items-center justify-between mb-6">
+        <div className={`p-4 rounded-2xl shadow-inner ${colors[color]}`}>
           <Icon className="w-6 h-6" />
         </div>
         {trend && (
-          <span className="text-[10px] font-black px-2 py-1 rounded-full bg-green-50 text-green-600 flex items-center gap-1">
+          <span className="text-[10px] font-black px-3 py-1.5 rounded-full bg-green-50 text-green-600 flex items-center gap-1 shadow-sm">
              <ArrowUpRight className="w-3 h-3" />
              {trend}
           </span>
         )}
       </div>
       <div>
-        <p className="text-xs font-black text-gray-400 uppercase tracking-widest">{title}</p>
-        <p className="text-3xl font-black text-gray-900 mt-1">{value}</p>
+        <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">{title}</p>
+        <p className="text-4xl font-black text-gray-900 mt-2 tracking-tight">{value}</p>
       </div>
     </div>
   );
